@@ -31,6 +31,7 @@ export class SupabaseService {
       email: params.email,
       password: params.password,
       options: {
+        emailRedirectTo: `${window.location.origin}/`,
         data: {
           display_name: params.displayName,
           wilaya_id: params.wilayaId,
@@ -89,7 +90,7 @@ export class SupabaseService {
     }
 
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
+      redirectTo: `${window.location.origin}/dashboard`,
     });
 
     if (error) {
