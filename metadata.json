@@ -1,0 +1,6 @@
+{
+  "name": "WIN DZ — وين نلقاها؟",
+  "description": "Algerian nationwide discovery platform helping citizens find products, services, opportunities, places, and community assistance. Search, Discover, Connect.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

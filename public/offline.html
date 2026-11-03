@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>غير متصل بالإنترنت | WIN DZ</title>
+  <style>
+    body {
+      font-family: 'Cairo', system-ui, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      margin: 0;
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      text-align: center;
+    }
+    .card {
+      background: #1e293b;
+      padding: 2.5rem;
+      border-radius: 1.5rem;
+      max-width: 480px;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(20, 184, 166, 0.2);
+    }
+    h1 { color: #2dd4bf; margin-top: 0; }
+    p { color: #cbd5e1; line-height: 1.6; }
+    .btn {
+      background: #14b8a6;
+      color: #0f172a;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 0.75rem;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 1rem;
+      margin-top: 1rem;
+    }
+    .btn:hover { background: #2dd4bf; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 1.5rem auto;">
+      <line x1="1" y1="1" x2="23" y2="23"></line>
+      <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path>
+      <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path>
+      <path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path>
+      <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path>
+      <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+      <line x1="12" y1="20" x2="12.01" y2="20"></line>
+    </svg>
+    <h1>أنت غير متصل بالإنترنت</h1>
+    <p>يتطلب البحث في الإعلانات المباشرة وإرسال الرسائل والمطابقة اتصالاً نشطاً بالإنترنت. يرجى التحقق من الشبكة ثم إعادة المحاولة.</p>
+    <button class="btn" onclick="window.location.reload()">إعادة المحاولة</button>
+  </div>
+</body>
+</html>
