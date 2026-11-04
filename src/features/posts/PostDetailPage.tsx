@@ -43,6 +43,9 @@ export const PostDetailPage: React.FC = () => {
   const [copiedShare, setCopiedShare] = useState(false);
   const [matches, setMatches] = useState<MatchResult[]>([]);
 
+  const [sellerProfile, setSellerProfile] = useState<any>(null);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+
   const post = id ? store.getPostById(id) : undefined;
 
   useEffect(() => {
@@ -52,6 +55,18 @@ export const PostDetailPage: React.FC = () => {
     if (post) {
       const opposingMatches = findMatchesForPost(post, store.getPosts());
       setMatches(opposingMatches.slice(0, 3));
+
+      // Fetch full seller profile to get conditional phone number
+      if (!isOwner && post.user_id) {
+        setLoadingProfile(true);
+        store.getProfile(post.user_id)
+          .then(profile => {
+            setSellerProfile(profile);
+          })
+          .finally(() => {
+            setLoadingProfile(false);
+          });
+      }
     }
   }, [id, post]);
 
@@ -346,10 +361,12 @@ export const PostDetailPage: React.FC = () => {
           ) : (
             /* Visitor / Citizen Actions */
             (() => {
-              const sellerPhone = post.user?.phone;
+              // Use fetched sellerProfile if available, fallback to joined user data
+              const displayUser = sellerProfile || post.user;
+              const sellerPhone = displayUser?.phone;
               const isPhonePublic = Boolean(
                 sellerPhone && 
-                (post.user?.show_phone_publicly !== false) && 
+                (displayUser?.show_phone_publicly !== false) && 
                 (post.contact_preference === 'phone_allowed')
               );
               const callUri = isPhonePublic ? normalizeCallNumber(sellerPhone) : null;
@@ -357,9 +374,9 @@ export const PostDetailPage: React.FC = () => {
 
               return (
                 <div className="w-full flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
-                  <div>
+                  <div className={`${loadingProfile ? 'animate-pulse opacity-60' : ''}`}>
                     <p className="font-bold text-slate-900 dark:text-white text-sm">
-                      {post.user?.display_name || 'مواطن مسجل'}
+                      {displayUser?.display_name || 'مواطن مسجل'}
                     </p>
                     <p className="text-xs text-slate-400 mt-0.5">
                       {!isPhonePublic ? t.contactByChatOnly : t.contactByPhone}
@@ -367,7 +384,9 @@ export const PostDetailPage: React.FC = () => {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
-                    {isPhonePublic && sellerPhone ? (
+                    {loadingProfile ? (
+                       <div className="h-10 w-32 bg-slate-100 dark:bg-slate-800 rounded-2xl animate-pulse" />
+                    ) : isPhonePublic && sellerPhone ? (
                       <>
                         {/* Direct Call Button */}
                         {callUri && (

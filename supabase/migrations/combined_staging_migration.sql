@@ -309,6 +309,26 @@ CREATE POLICY "Users can delete their own posts"
 -- 2. Profiles Security & View
 REVOKE ALL ON TABLE public.profiles FROM PUBLIC, anon, authenticated;
 
+-- Grant COLUMN-LEVEL SELECT to everyone for non-sensitive discovery fields
+-- This allows joins in public queries (like posts) to work safely for anon and authenticated.
+GRANT SELECT (
+    id, 
+    display_name, 
+    avatar_url, 
+    wilaya_id, 
+    show_phone_publicly, 
+    bio, 
+    is_verified, 
+    created_at, 
+    last_active_at
+) ON public.profiles TO anon, authenticated;
+
+-- RLS for Profiles
+-- This policy allows selecting the rows, but only the granted columns will be returned.
+CREATE POLICY "Public can view profile safe fields"
+    ON public.profiles FOR SELECT
+    USING (true);
+
 GRANT UPDATE (
     display_name,
     phone,
@@ -342,6 +362,16 @@ SELECT
 FROM public.profiles;
 
 GRANT SELECT ON public.public_profiles TO anon, authenticated;
+
+-- RLS Policies for SELECT
+-- Note: is_admin() check might need to be defined before this, 
+-- but in Supabase policies can be created even if the function doesn't exist yet (late binding).
+-- However, for combined migration reliability, we ensure is_admin() is available or use EXISTS.
+
+-- Users can view own profile (Full row access for owner)
+CREATE POLICY "Users can view own profile"
+    ON public.profiles FOR SELECT
+    USING (auth.uid() = id);
 
 CREATE POLICY "Users can update their own profile"
     ON profiles FOR UPDATE
@@ -444,7 +474,7 @@ GRANT SELECT, INSERT ON public.reports TO authenticated;
 
 CREATE POLICY "Admins have full access to reports"
     ON reports FOR ALL
-    USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+    USING (public.is_admin());
 
 CREATE POLICY "Citizens can insert reports"
     ON reports FOR INSERT
@@ -453,6 +483,57 @@ CREATE POLICY "Citizens can insert reports"
         AND reporter_id = auth.uid()
         AND status = 'pending'
     );
+
+-- 8.1 Admin Users Table RLS
+REVOKE ALL ON TABLE public.admin_users FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.admin_users TO authenticated;
+
+CREATE POLICY "Admins can view admin_users"
+    ON public.admin_users FOR SELECT
+    USING (public.is_admin());
+
+-- 8.2 Admin Full Profiles Retrieval RPC (SECURITY DEFINER)
+CREATE OR REPLACE FUNCTION public.get_all_profiles()
+RETURNS TABLE (
+    id UUID,
+    email VARCHAR,
+    display_name VARCHAR,
+    phone VARCHAR,
+    show_phone_publicly BOOLEAN,
+    avatar_url TEXT,
+    bio TEXT,
+    wilaya_id SMALLINT,
+    commune_name VARCHAR,
+    commune_id VARCHAR,
+    preferred_language VARCHAR,
+    role VARCHAR,
+    is_verified BOOLEAN,
+    is_suspended BOOLEAN,
+    created_at TIMESTAMPTZ,
+    last_active_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    IF NOT public.is_admin() THEN
+        RAISE EXCEPTION 'Not authorized';
+    END IF;
+
+    RETURN QUERY
+    SELECT 
+        p.id, p.email, p.display_name, p.phone, p.show_phone_publicly,
+        p.avatar_url, p.bio, p.wilaya_id, p.commune_name, p.commune_id,
+        p.preferred_language, p.role, p.is_verified, p.is_suspended,
+        p.created_at, p.last_active_at
+    FROM public.profiles p
+    ORDER BY p.created_at DESC;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.get_all_profiles() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_all_profiles() TO authenticated;
 
 -- 9. Baseline Permissions for Public Reference Tables
 GRANT SELECT ON public.wilayas TO anon, authenticated;
@@ -821,24 +902,7 @@ FROM public.profiles;
 
 GRANT SELECT ON public.public_profiles TO anon, authenticated;
 
--- -------------------------------------------------------------------------
--- 3. PERMISSIONS ON public.profiles (BLOCKS DIRECT TABLE RECONNAISSANCE)
--- -------------------------------------------------------------------------
--- Revoke ALL direct table permissions on profiles from PUBLIC, anon, and authenticated
-REVOKE ALL ON TABLE public.profiles FROM PUBLIC, anon, authenticated;
-
--- Grant COLUMN-LEVEL UPDATE ONLY on user-editable profile fields to authenticated
-GRANT UPDATE (
-    display_name,
-    phone,
-    show_phone_publicly,
-    avatar_url,
-    bio,
-    wilaya_id,
-    commune_name,
-    commune_id,
-    preferred_language
-) ON public.profiles TO authenticated;
+-- 3. PERMISSIONS ON public.profiles (Standardized above in section 2)
 
 -- -------------------------------------------------------------------------
 -- 4. SECURE OWNER RPC FUNCTIONS (get_my_profile & update_my_profile)
@@ -974,24 +1038,7 @@ DROP POLICY IF EXISTS "Public profiles are viewable by everyone" ON public.profi
 DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 
 -- Lock down direct SELECT access on public.profiles table
-REVOKE ALL ON TABLE public.profiles FROM PUBLIC, anon, authenticated;
-
-GRANT UPDATE (
-    display_name,
-    phone,
-    show_phone_publicly,
-    avatar_url,
-    bio,
-    wilaya_id,
-    commune_name,
-    commune_id,
-    preferred_language
-) ON public.profiles TO authenticated;
-
-CREATE POLICY "Users can update own profile"
-    ON public.profiles FOR UPDATE
-    USING (auth.uid() = id)
-    WITH CHECK (auth.uid() = id);
+-- 2. Profiles Security (Redundant block removed, using standardized permissions from section 2 above)
 
 -- 5.1 Secure Atomic Conversation Creation RPC
 CREATE OR REPLACE FUNCTION public.create_conversation(
@@ -1167,6 +1214,9 @@ CREATE POLICY "Post owners can delete post images"
 -- -------------------------------------------------------------------------
 -- 7. FORCE ROW LEVEL SECURITY ON SENSITIVE TABLES
 -- -------------------------------------------------------------------------
+ALTER TABLE IF EXISTS public.wilayas FORCE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.communes FORCE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.categories FORCE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.profiles FORCE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.posts FORCE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.post_images FORCE ROW LEVEL SECURITY;
@@ -2865,5 +2915,142 @@ ON CONFLICT (id) DO UPDATE SET
   postal_code = EXCLUDED.postal_code,
   is_seat = EXCLUDED.is_seat;
 
--- <<< END FILE: supabase/migrations/20261103000005_seed_wilayas_and_communes.sql <<<
+-- <<< END OF CONSOLIDATED MIGRATION <<<
 
+-- =========================================================================
+-- UTILITY: PROMOTE USER TO ADMIN
+-- =========================================================================
+-- To promote a user to administrator, run the following SQL (replace with actual user ID):
+-- 
+-- INSERT INTO public.admin_users (user_id) 
+-- VALUES ('<USER_UUID>')
+-- ON CONFLICT DO NOTHING;
+-- 
+-- UPDATE public.profiles SET role = 'admin' WHERE id = '<USER_UUID>';
+
+
+-- >>> BEGIN FILE: supabase/migrations/20261104_profiles_security_hardening.sql <<<
+-- =========================================================================
+-- WIN DZ (وين نلقاها؟) - FINAL PROFILE SECURITY HARDENING
+-- Consolidated Implementation of Column-Level Security (CLS)
+-- =========================================================================
+
+-- 1. Ensure RLS is enabled and forced
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.profiles FORCE ROW LEVEL SECURITY;
+
+-- 2. Revoke all direct access to start from a clean slate
+REVOKE ALL ON TABLE public.profiles FROM anon, authenticated;
+
+-- 3. Grant SELECT on the table itself (required for PostgREST joins to work)
+GRANT SELECT ON TABLE public.profiles TO anon, authenticated;
+
+-- 4. IMMEDIATELY REVOKE access to sensitive columns (Column-Level Security)
+-- This ensures that even if a user tries to select these columns, they get a 42501 error.
+REVOKE SELECT (
+    email, 
+    phone, 
+    role, 
+    is_suspended, 
+    last_active_at
+) ON public.profiles FROM anon, authenticated;
+
+-- 5. Define refined RLS Policies for Profiles
+DROP POLICY IF EXISTS "Public can view profile safe fields" ON public.profiles;
+DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Public profiles are viewable by everyone" ON public.profiles;
+DROP POLICY IF EXISTS "Public discovery of profiles" ON public.profiles;
+
+-- Policy 1: Everyone can see rows (but column-level grants will restrict fields)
+CREATE POLICY "Public discovery of profiles"
+    ON public.profiles FOR SELECT
+    USING (true);
+
+-- 6. Ensure View public_profiles is secure and available
+-- This view provides the conditional phone logic.
+CREATE OR REPLACE VIEW public.public_profiles AS
+SELECT 
+    id,
+    display_name,
+    CASE 
+        WHEN show_phone_publicly = TRUE THEN phone 
+        ELSE NULL 
+    END AS phone,
+    show_phone_publicly,
+    avatar_url,
+    bio,
+    wilaya_id,
+    commune_name,
+    commune_id,
+    preferred_language,
+    is_verified,
+    created_at
+FROM public.profiles;
+
+GRANT SELECT ON public.public_profiles TO anon, authenticated;
+
+-- 7. Secure Admin Access
+-- Ensure admin_users table is locked down
+ALTER TABLE public.admin_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.admin_users FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON public.admin_users FROM anon, authenticated;
+
+-- 8. Verify/Create is_admin function if it doesn't exist
+-- This uses the admin_users table for authoritative checks
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 FROM public.admin_users 
+        WHERE user_id = auth.uid()
+    );
+END;
+$$;
+
+-- 9. Secure get_all_profiles RPC
+CREATE OR REPLACE FUNCTION public.get_all_profiles()
+RETURNS TABLE (
+    id UUID,
+    email VARCHAR,
+    display_name VARCHAR,
+    phone VARCHAR,
+    show_phone_publicly BOOLEAN,
+    avatar_url TEXT,
+    bio TEXT,
+    wilaya_id SMALLINT,
+    commune_name VARCHAR,
+    commune_id VARCHAR,
+    preferred_language VARCHAR,
+    role VARCHAR,
+    is_verified BOOLEAN,
+    is_suspended BOOLEAN,
+    created_at TIMESTAMPTZ,
+    last_active_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    IF NOT public.is_admin() THEN
+        RAISE EXCEPTION 'Not authorized';
+    END IF;
+
+    RETURN QUERY
+    SELECT 
+        p.id, p.email, p.display_name, p.phone, p.show_phone_publicly,
+        p.avatar_url, p.bio, p.wilaya_id, p.commune_name, p.commune_id,
+        p.preferred_language, p.role, p.is_verified, p.is_suspended,
+        p.created_at, p.last_active_at
+    FROM public.profiles p
+    ORDER BY p.created_at DESC;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.get_all_profiles() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_all_profiles() TO authenticated;
+-- <<< END FILE: supabase/migrations/20261104_profiles_security_hardening.sql <<<

@@ -15,15 +15,19 @@ BEGIN
     -- -------------------------------------------------------------------------
     -- 1. PROFILES & PRIVACY (7 Assertions)
     -- -------------------------------------------------------------------------
-    -- 1.1 Direct SELECT on profiles must be REVOKED for anon
-    IF has_table_privilege('anon', 'public.profiles', 'SELECT') THEN
-        RAISE EXCEPTION 'ASSERTION 1.1 FAILED: Direct SELECT on profiles MUST BE REVOKED for anon!';
+    -- 1.1 SELECT on sensitive columns must be REVOKED for anon
+    IF has_column_privilege('anon', 'public.profiles', 'email', 'SELECT') OR
+       has_column_privilege('anon', 'public.profiles', 'phone', 'SELECT') OR
+       has_column_privilege('anon', 'public.profiles', 'role', 'SELECT') THEN
+        RAISE EXCEPTION 'ASSERTION 1.1 FAILED: Sensitive columns in profiles MUST BE REVOKED for anon!';
     END IF;
     v_assertion_count := v_assertion_count + 1;
 
-    -- 1.2 Direct SELECT on profiles must be REVOKED for authenticated
-    IF has_table_privilege('authenticated', 'public.profiles', 'SELECT') THEN
-        RAISE EXCEPTION 'ASSERTION 1.2 FAILED: Direct SELECT on profiles MUST BE REVOKED for authenticated!';
+    -- 1.2 SELECT on sensitive columns must be REVOKED for authenticated
+    IF has_column_privilege('authenticated', 'public.profiles', 'email', 'SELECT') OR
+       has_column_privilege('authenticated', 'public.profiles', 'phone', 'SELECT') OR
+       has_column_privilege('authenticated', 'public.profiles', 'role', 'SELECT') THEN
+        RAISE EXCEPTION 'ASSERTION 1.2 FAILED: Sensitive columns in profiles MUST BE REVOKED for authenticated!';
     END IF;
     v_assertion_count := v_assertion_count + 1;
 

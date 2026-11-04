@@ -159,6 +159,19 @@ class DataStore {
       // 1. Initial sync of posts
       await this.refreshPostsFromSupabase();
 
+      // 1.1 Initial check for existing session profile
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const profile = await SupabaseService.getProfile(session.user.id);
+        if (profile) {
+          this.currentUser = profile;
+          if (profile.role === 'admin') {
+            await this.refreshUsersFromSupabase();
+          }
+          this.save();
+        }
+      }
+
       // 2. Auth State Changes Listener
       supabase.auth.onAuthStateChange(async (event, session) => {
         if (session?.user) {
@@ -166,6 +179,12 @@ class DataStore {
             const profile = await SupabaseService.getProfile(session.user.id);
             if (profile) {
               this.currentUser = profile;
+              
+              // If admin, fetch all users to replace demo data
+              if (profile.role === 'admin') {
+                await this.refreshUsersFromSupabase();
+              }
+              
               this.save();
               await this.syncUserDataFromSupabase(profile.id);
             }
@@ -176,6 +195,7 @@ class DataStore {
           // If explicitly signed out of Supabase
           if (!this.currentUser || !this.currentUser.id.startsWith('user-')) {
             this.currentUser = null;
+            this.users = INITIAL_DEMO_USERS; // Reset to demo data on logout
             this.save();
           }
         }
@@ -229,6 +249,20 @@ class DataStore {
       console.warn('Could not refresh posts from Supabase:', err);
     } finally {
       this.isSupabaseSyncing = false;
+    }
+  }
+
+  public async refreshUsersFromSupabase(): Promise<void> {
+    if (!supabase || !isSupabaseConfigured) return;
+    try {
+      const dbUsers = await SupabaseService.fetchAllProfiles();
+      if (dbUsers && dbUsers.length > 0) {
+        // Only keep demo users if they are not in the DB
+        this.users = dbUsers;
+        this.save();
+      }
+    } catch (err) {
+      console.warn('Could not refresh users from Supabase:', err);
     }
   }
 
@@ -540,6 +574,30 @@ class DataStore {
       this.currentUser = target;
       this.save();
     }
+  }
+
+  public async getProfile(userId: string): Promise<UserProfile | null> {
+    const cached = this.users.find(u => u.id === userId);
+    if (cached && !cached.id.startsWith('user-')) {
+       // Optional: could re-validate here if needed
+    }
+
+    if (isSupabaseConfigured && !userId.startsWith('user-')) {
+      const profile = await SupabaseService.getProfile(userId);
+      if (profile) {
+        // Update cache
+        const idx = this.users.findIndex(u => u.id === userId);
+        if (idx !== -1) {
+          this.users[idx] = profile;
+        } else {
+          this.users.push(profile);
+        }
+        this.save();
+        return profile;
+      }
+    }
+
+    return cached || null;
   }
 
   public signOut(): void {

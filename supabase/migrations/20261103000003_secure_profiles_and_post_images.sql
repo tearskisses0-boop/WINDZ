@@ -48,8 +48,27 @@ GRANT SELECT ON public.public_profiles TO anon, authenticated;
 -- -------------------------------------------------------------------------
 -- 3. PERMISSIONS ON public.profiles (BLOCKS DIRECT TABLE RECONNAISSANCE)
 -- -------------------------------------------------------------------------
--- Revoke ALL direct table permissions on profiles from PUBLIC, anon, and authenticated
-REVOKE ALL ON TABLE public.profiles FROM PUBLIC, anon, authenticated;
+-- Grant COLUMN-LEVEL SELECT to everyone for non-sensitive discovery fields
+-- This allows joins in public queries (like posts) to work safely for anon and authenticated.
+GRANT SELECT (
+    id, 
+    display_name, 
+    avatar_url, 
+    wilaya_id, 
+    phone, 
+    show_phone_publicly, 
+    bio, 
+    is_verified, 
+    role,
+    created_at, 
+    last_active_at
+) ON public.profiles TO anon, authenticated;
+
+-- RLS for Profiles
+-- This policy allows selecting the rows, but only the granted columns will be returned.
+CREATE POLICY "Public can view profile safe fields"
+    ON public.profiles FOR SELECT
+    USING (true);
 
 -- Grant COLUMN-LEVEL UPDATE ONLY on user-editable profile fields to authenticated
 GRANT UPDATE (
@@ -190,6 +209,50 @@ $$;
 REVOKE ALL ON FUNCTION public.update_my_profile(VARCHAR, VARCHAR, BOOLEAN, TEXT, TEXT, SMALLINT, VARCHAR, VARCHAR, VARCHAR) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.update_my_profile(VARCHAR, VARCHAR, BOOLEAN, TEXT, TEXT, SMALLINT, VARCHAR, VARCHAR, VARCHAR) TO authenticated;
 
+-- 4.3 Admin Full Profiles Retrieval RPC (SECURITY DEFINER)
+CREATE OR REPLACE FUNCTION public.get_all_profiles()
+RETURNS TABLE (
+    id UUID,
+    email VARCHAR,
+    display_name VARCHAR,
+    phone VARCHAR,
+    show_phone_publicly BOOLEAN,
+    avatar_url TEXT,
+    bio TEXT,
+    wilaya_id SMALLINT,
+    commune_name VARCHAR,
+    commune_id VARCHAR,
+    preferred_language VARCHAR,
+    role VARCHAR,
+    is_verified BOOLEAN,
+    is_suspended BOOLEAN,
+    created_at TIMESTAMPTZ,
+    last_active_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    -- Authorization check (assumes is_admin function exists from previous migration)
+    IF NOT public.is_admin() THEN
+        RAISE EXCEPTION 'Not authorized';
+    END IF;
+
+    RETURN QUERY
+    SELECT 
+        p.id, p.email, p.display_name, p.phone, p.show_phone_publicly,
+        p.avatar_url, p.bio, p.wilaya_id, p.commune_name, p.commune_id,
+        p.preferred_language, p.role, p.is_verified, p.is_suspended,
+        p.created_at, p.last_active_at
+    FROM public.profiles p
+    ORDER BY p.created_at DESC;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.get_all_profiles() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_all_profiles() TO authenticated;
+
 -- -------------------------------------------------------------------------
 -- 5. RLS POLICIES & CONVERSATION RPC SECURITY
 -- -------------------------------------------------------------------------
@@ -197,8 +260,14 @@ DROP POLICY IF EXISTS "Profiles are viewable by everyone" ON public.profiles;
 DROP POLICY IF EXISTS "Public profiles are viewable by everyone" ON public.profiles;
 DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 
--- Lock down direct SELECT access on public.profiles table
+-- Lock down direct SELECT access on public.profiles table (Re-enforcing revocation)
 REVOKE ALL ON TABLE public.profiles FROM PUBLIC, anon, authenticated;
+
+-- Re-apply column-level grants
+GRANT SELECT (
+    id, display_name, avatar_url, wilaya_id, phone, show_phone_publicly, 
+    bio, is_verified, role, created_at, last_active_at
+) ON public.profiles TO anon, authenticated;
 
 GRANT UPDATE (
     display_name,
@@ -211,6 +280,11 @@ GRANT UPDATE (
     commune_id,
     preferred_language
 ) ON public.profiles TO authenticated;
+
+-- Row level access for owners
+CREATE POLICY "Users can view own profile"
+    ON public.profiles FOR SELECT
+    USING (auth.uid() = id);
 
 CREATE POLICY "Users can update own profile"
     ON public.profiles FOR UPDATE

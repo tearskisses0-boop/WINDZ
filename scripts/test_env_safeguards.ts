@@ -11,7 +11,7 @@ console.log('=== STARTING ENVIRONMENT SAFEGUARD TESTS ===');
 const stagingProdAttempt = resolveAppEnv({
   mode: 'staging',
   url: `https://${PRODUCTION_PROJECT_REF}.supabase.co`,
-  key: 'sb_publishable_vn2tSoRC_cWFD_7SVdaCKA_oSxiXBym',
+  key: 'sb_publishable_production_key_mock_123',
 });
 
 if (!stagingProdAttempt.isConfigured && stagingProdAttempt.maskedUrl.includes('BLOCKED')) {

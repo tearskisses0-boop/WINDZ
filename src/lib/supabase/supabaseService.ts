@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from './client';
+import { activeEnvConfig } from './envConfig';
 import { 
   Post, 
   UserProfile, 
@@ -10,6 +11,31 @@ import {
   ModerationAuditLog,
   SearchFilterState 
 } from '../../types';
+
+const STORAGE_BUCKET = 'post-images';
+
+function ensureFullUrl(path: string | null | undefined): string | undefined {
+  if (!path) return undefined;
+  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:') || path.startsWith('blob:')) {
+    return path;
+  }
+  
+  // If it's a relative path from Supabase storage, build the full public URL
+  if (isSupabaseConfigured && activeEnvConfig.supabaseUrl) {
+    const baseUrl = activeEnvConfig.supabaseUrl.replace(/\/$/, '');
+    // Clean path: remove leading slash if present
+    const cleanPath = path.startsWith('/') ? path.substring(1) : path;
+    
+    // Check if path already includes the bucket name (sometimes happens in older data)
+    if (cleanPath.startsWith(`${STORAGE_BUCKET}/`)) {
+      return `${baseUrl}/storage/v1/object/public/${cleanPath}`;
+    }
+    
+    return `${baseUrl}/storage/v1/object/public/${STORAGE_BUCKET}/${cleanPath}`;
+  }
+  
+  return path;
+}
 
 export class SupabaseService {
   // -------------------------------------------------------------------------
@@ -115,7 +141,7 @@ export class SupabaseService {
     return { success: true };
   }
 
-  public static async getProfile(userId: string): Promise<UserProfile | null> {
+  public static async getProfile(userId: string, retryCount = 0): Promise<UserProfile | null> {
     if (!supabase || !isSupabaseConfigured) return null;
 
     // 1. Try owner RPC get_my_profile for authenticated user's own profile
@@ -129,7 +155,7 @@ export class SupabaseService {
           display_name: row.display_name,
           phone: row.phone || '',
           show_phone_publicly: row.show_phone_publicly !== false,
-          avatar_url: row.avatar_url,
+          avatar_url: ensureFullUrl(row.avatar_url),
           bio: row.bio,
           wilaya_id: row.wilaya_id || 16,
           commune_name: row.commune_name,
@@ -154,6 +180,13 @@ export class SupabaseService {
       .maybeSingle();
 
     if (error || !data) {
+      // If we are looking for the current user and it's not found yet, it might be a race with the trigger
+      // Retry up to 3 times with a short delay
+      if (retryCount < 3) {
+        await new Promise(resolve => setTimeout(resolve, 800));
+        return this.getProfile(userId, retryCount + 1);
+      }
+
       // Check auth session user metadata as fallback
       const { data: authData } = await supabase.auth.getUser();
       if (authData?.user && authData.user.id === userId) {
@@ -166,7 +199,7 @@ export class SupabaseService {
           show_phone_publicly: meta.show_phone_publicly !== false,
           wilaya_id: Number(meta.wilaya_id) || 16,
           preferred_language: 'ar',
-          role: 'user',
+          role: meta.role || 'user',
           is_verified: true,
           created_at: authData.user.created_at,
         };
@@ -180,7 +213,7 @@ export class SupabaseService {
       display_name: data.display_name,
       phone: data.phone || '',
       show_phone_publicly: data.show_phone_publicly !== false,
-      avatar_url: data.avatar_url,
+      avatar_url: ensureFullUrl(data.avatar_url),
       bio: data.bio,
       wilaya_id: data.wilaya_id || 16,
       commune_name: data.commune_name,
@@ -254,6 +287,39 @@ export class SupabaseService {
     }
   }
 
+  public static async fetchAllProfiles(): Promise<UserProfile[]> {
+    if (!supabase || !isSupabaseConfigured) return [];
+
+    // Use secure server-side RPC function get_all_profiles() 
+    // This is the authoritative way for admins to fetch full records (including emails)
+    // without exposing sensitive data via broad RLS policies.
+    const { data, error } = await supabase.rpc('get_all_profiles');
+
+    if (error) {
+      console.warn('Supabase fetchAllProfiles error:', error.message);
+      return [];
+    }
+
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      email: row.email,
+      display_name: row.display_name,
+      phone: row.phone || '',
+      show_phone_publicly: row.show_phone_publicly !== false,
+      avatar_url: row.avatar_url,
+      bio: row.bio,
+      wilaya_id: row.wilaya_id || 16,
+      commune_name: row.commune_name,
+      commune_id: row.commune_id,
+      preferred_language: row.preferred_language || 'ar',
+      role: row.role || 'user',
+      is_verified: row.is_verified,
+      is_suspended: row.is_suspended,
+      created_at: row.created_at,
+      last_active_at: row.last_active_at,
+    }));
+  }
+
   // -------------------------------------------------------------------------
   // 2. POSTS CRUD & SEARCH
   // -------------------------------------------------------------------------
@@ -265,7 +331,7 @@ export class SupabaseService {
 
     let query = supabase
       .from('posts')
-      .select('*, profiles:user_id(id, display_name, wilaya_id, phone, avatar_url)', { count: 'exact' });
+      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id, show_phone_publicly)', { count: 'exact' });
 
     // Filter by active status
     if (filters?.availability && filters.availability !== 'ALL') {
@@ -349,7 +415,7 @@ export class SupabaseService {
         wilaya_id: row.wilaya_id,
         commune_id: row.commune_id,
         commune_name: row.commune_name,
-        images: Array.isArray(row.images) ? row.images : [],
+        images: (Array.isArray(row.images) ? row.images : []).map((img: string) => ensureFullUrl(img)).filter(Boolean) as string[],
         price: row.price != null ? Number(row.price) : undefined,
         budget_max: row.budget_max != null ? Number(row.budget_max) : undefined,
         is_free: row.is_free,
@@ -367,7 +433,7 @@ export class SupabaseService {
           wilaya_id: seller.wilaya_id,
           phone: seller.phone,
           show_phone_publicly: seller.show_phone_publicly !== false,
-          avatar_url: seller.avatar_url,
+          avatar_url: ensureFullUrl(seller.avatar_url),
         } : undefined,
       };
     });
@@ -380,7 +446,7 @@ export class SupabaseService {
 
     const { data, error } = await supabase
       .from('posts')
-      .select('*, profiles:user_id(id, display_name, wilaya_id, phone, avatar_url)')
+      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id, show_phone_publicly)')
       .eq('id', id)
       .maybeSingle();
 
@@ -399,7 +465,7 @@ export class SupabaseService {
       wilaya_id: data.wilaya_id,
       commune_id: data.commune_id,
       commune_name: data.commune_name,
-      images: Array.isArray(data.images) ? data.images : [],
+      images: (Array.isArray(data.images) ? data.images : []).map((img: string) => ensureFullUrl(img)).filter(Boolean) as string[],
       price: data.price != null ? Number(data.price) : undefined,
       budget_max: data.budget_max != null ? Number(data.budget_max) : undefined,
       is_free: data.is_free,
@@ -417,7 +483,7 @@ export class SupabaseService {
         wilaya_id: seller.wilaya_id,
         phone: seller.phone,
         show_phone_publicly: seller.show_phone_publicly !== false,
-        avatar_url: seller.avatar_url,
+        avatar_url: ensureFullUrl(seller.avatar_url),
       } : undefined,
     };
   }
@@ -456,7 +522,7 @@ export class SupabaseService {
     const { data, error } = await supabase
       .from('posts')
       .insert([payload])
-      .select('*, profiles:user_id(id, display_name, wilaya_id, phone, avatar_url)')
+      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id, show_phone_publicly)')
       .single();
 
     if (error) {
@@ -474,7 +540,7 @@ export class SupabaseService {
       wilaya_id: data.wilaya_id,
       commune_id: data.commune_id,
       commune_name: data.commune_name,
-      images: Array.isArray(data.images) ? data.images : [],
+      images: (Array.isArray(data.images) ? data.images : []).map((img: string) => ensureFullUrl(img)).filter(Boolean) as string[],
       price: data.price != null ? Number(data.price) : undefined,
       budget_max: data.budget_max != null ? Number(data.budget_max) : undefined,
       is_free: data.is_free,
@@ -486,7 +552,10 @@ export class SupabaseService {
       views_count: data.views_count || 0,
       created_at: data.created_at,
       updated_at: data.updated_at,
-      user: data.profiles,
+      user: data.profiles ? {
+        ...data.profiles,
+        avatar_url: ensureFullUrl(data.profiles.avatar_url)
+      } : undefined,
     };
   }
 
@@ -518,7 +587,7 @@ export class SupabaseService {
       .from('posts')
       .update(payload)
       .eq('id', id)
-      .select('*, profiles:user_id(id, display_name, wilaya_id, phone, avatar_url)')
+      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id, show_phone_publicly)')
       .single();
 
     if (error) {
@@ -536,7 +605,7 @@ export class SupabaseService {
       wilaya_id: data.wilaya_id,
       commune_id: data.commune_id,
       commune_name: data.commune_name,
-      images: Array.isArray(data.images) ? data.images : [],
+      images: (Array.isArray(data.images) ? data.images : []).map((img: string) => ensureFullUrl(img)).filter(Boolean) as string[],
       price: data.price != null ? Number(data.price) : undefined,
       budget_max: data.budget_max != null ? Number(data.budget_max) : undefined,
       is_free: data.is_free,
@@ -548,7 +617,10 @@ export class SupabaseService {
       views_count: data.views_count || 0,
       created_at: data.created_at,
       updated_at: data.updated_at,
-      user: data.profiles,
+      user: data.profiles ? {
+        ...data.profiles,
+        avatar_url: ensureFullUrl(data.profiles.avatar_url)
+      } : undefined,
     };
   }
 
@@ -642,7 +714,7 @@ export class SupabaseService {
 
     const { data: convData, error: convError } = await supabase
       .from('conversations')
-      .select('*, posts(*), conversation_participants(user_id, profiles(id, display_name, wilaya_id, phone, avatar_url)))')
+      .select('*, posts(*), conversation_participants(user_id, profiles:user_id(id, display_name, avatar_url, wilaya_id)))')
       .in('id', conversationIds)
       .order('last_message_at', { ascending: false });
 
@@ -785,7 +857,7 @@ export class SupabaseService {
 
     const { data, error } = await supabase
       .from('favorites')
-      .select('*, posts(*, profiles:user_id(id, display_name, wilaya_id, phone, avatar_url))')
+      .select('*, posts(*, profiles:user_id(id, display_name, avatar_url, wilaya_id, show_phone_publicly))')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
@@ -963,7 +1035,7 @@ export class SupabaseService {
 
     const { data, error } = await supabase
       .from('moderation_actions')
-      .select('*, profiles:admin_id(display_name)')
+      .select('*, profiles:admin_id(display_name, avatar_url)')
       .order('created_at', { ascending: false });
 
     if (error || !data) return [];
