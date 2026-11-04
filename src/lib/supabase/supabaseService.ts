@@ -331,7 +331,7 @@ export class SupabaseService {
 
     let query = supabase
       .from('posts')
-      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id, show_phone_publicly)', { count: 'exact' });
+      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id)', { count: 'exact' });
 
     // Filter by active status
     if (filters?.availability && filters.availability !== 'ALL') {
@@ -432,7 +432,7 @@ export class SupabaseService {
           display_name: seller.display_name,
           wilaya_id: seller.wilaya_id,
           phone: seller.phone,
-          show_phone_publicly: seller.show_phone_publicly !== false,
+          show_phone_publicly: seller.show_phone_publicly === true,
           avatar_url: ensureFullUrl(seller.avatar_url),
         } : undefined,
       };
@@ -446,7 +446,7 @@ export class SupabaseService {
 
     const { data, error } = await supabase
       .from('posts')
-      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id, show_phone_publicly)')
+      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id)')
       .eq('id', id)
       .maybeSingle();
 
@@ -482,7 +482,7 @@ export class SupabaseService {
         display_name: seller.display_name,
         wilaya_id: seller.wilaya_id,
         phone: seller.phone,
-        show_phone_publicly: seller.show_phone_publicly !== false,
+        show_phone_publicly: seller.show_phone_publicly === true,
         avatar_url: ensureFullUrl(seller.avatar_url),
       } : undefined,
     };
@@ -522,7 +522,7 @@ export class SupabaseService {
     const { data, error } = await supabase
       .from('posts')
       .insert([payload])
-      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id, show_phone_publicly)')
+      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id)')
       .single();
 
     if (error) {
@@ -587,7 +587,7 @@ export class SupabaseService {
       .from('posts')
       .update(payload)
       .eq('id', id)
-      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id, show_phone_publicly)')
+      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id)')
       .single();
 
     if (error) {
@@ -857,7 +857,7 @@ export class SupabaseService {
 
     const { data, error } = await supabase
       .from('favorites')
-      .select('*, posts(*, profiles:user_id(id, display_name, avatar_url, wilaya_id, show_phone_publicly))')
+      .select('*, posts(*, profiles:user_id(id, display_name, avatar_url, wilaya_id))')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
