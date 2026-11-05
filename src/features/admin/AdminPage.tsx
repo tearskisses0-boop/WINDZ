@@ -24,16 +24,19 @@ import {
   UserX,
   Database,
   Server,
-  Key
+  Key,
+  Loader2
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { checkSupabaseConnection, SupabaseConnectionStatus } from '../../lib/supabase/supabaseHealth';
+import { SupabaseService } from '../../lib/supabase/supabaseService';
 
 export const AdminPage: React.FC = () => {
-  const { user, isAdmin, switchDemoUser } = useAuth();
+  const { user } = useAuth();
   const { t, language } = useLanguage();
 
   const [activeTab, setActiveTab] = useState<'overview' | 'database' | 'reports' | 'posts' | 'users' | 'locations' | 'audit'>('overview');
+  const [isServerVerifiedAdmin, setIsServerVerifiedAdmin] = useState<boolean | null>(null);
 
   const [reports, setReports] = useState<ContentReport[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -50,23 +53,66 @@ export const AdminPage: React.FC = () => {
     setIsCheckingDb(false);
   };
 
-  const loadAdminData = () => {
+  const loadAdminData = async () => {
     setReports(store.getReports());
     setPosts(store.getPosts());
-    setUsers(store.getAllUsers());
+    const realProfiles = await SupabaseService.fetchAllProfiles();
+    setUsers(realProfiles.length > 0 ? realProfiles : store.getAllUsers());
     setAuditLogs(store.getAuditLogs());
     setLocationReport(validateAlgerianLocations());
   };
 
   useEffect(() => {
-    loadAdminData();
-    checkDb();
-    const unsubscribe = store.subscribe(loadAdminData);
-    return unsubscribe;
-  }, []);
+    let isMounted = true;
 
-  // Security check: non-admin protection
-  if (!isAdmin) {
+    const verifyAndLoad = async () => {
+      if (!user) {
+        if (isMounted) setIsServerVerifiedAdmin(false);
+        return;
+      }
+
+      try {
+        const isAuthoritativeAdmin = await SupabaseService.checkIsAdmin(user.id);
+        if (isMounted) {
+          setIsServerVerifiedAdmin(isAuthoritativeAdmin);
+          if (isAuthoritativeAdmin) {
+            await loadAdminData();
+            checkDb();
+          }
+        }
+      } catch {
+        if (isMounted) setIsServerVerifiedAdmin(false);
+      }
+    };
+
+    verifyAndLoad();
+
+    const unsubscribe = store.subscribe(() => {
+      if (isServerVerifiedAdmin) {
+        loadAdminData();
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, [user]);
+
+  // Loading state during server verification
+  if (isServerVerifiedAdmin === null) {
+    return (
+      <div className="max-w-md mx-auto px-4 py-20 text-center space-y-3">
+        <Loader2 className="w-8 h-8 animate-spin text-teal-600 mx-auto" />
+        <p className="text-xs text-slate-500 font-medium">
+          جاري التحقق من الصلاحيات الإدارية المشفرة في قاعدة البيانات...
+        </p>
+      </div>
+    );
+  }
+
+  // Security check: Authoritative server-side verification failed
+  if (!isServerVerifiedAdmin) {
     return (
       <div className="max-w-md mx-auto px-4 py-20 text-center space-y-4">
         <div className="w-16 h-16 rounded-3xl bg-amber-500/10 text-amber-600 flex items-center justify-center mx-auto">
@@ -76,14 +122,14 @@ export const AdminPage: React.FC = () => {
           {t.adminAccessRestricted}
         </h2>
         <p className="text-xs text-slate-500 leading-relaxed">
-          يتطلب هذا القسم صلاحيات مسؤول النظام في منصة WIN DZ. للمعاينة الفورية في بيئة الاختبار، يمكنك التبديل إلى حساب المشرف:
+          يتطلب هذا القسم صلاحيات مسؤول النظام في منصة WIN DZ ومطابقة معرّف الحساب في جدول admin_users. يرجى تسجيل الدخول بحساب مسؤول مصرح له.
         </p>
-        <button
-          onClick={() => switchDemoUser('user-admin')}
-          className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-md transition cursor-pointer"
+        <Link
+          to="/"
+          className="inline-block mt-2 px-5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition"
         >
-          التبديل إلى حساب المشرف (المسؤول الوطني)
-        </button>
+          العودة للصفحة الرئيسية
+        </Link>
       </div>
     );
   }

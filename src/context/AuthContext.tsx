@@ -15,23 +15,19 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   resendVerification: (email: string) => Promise<{ success: boolean; error?: string }>;
-  switchDemoUser: (userId: string) => void;
   updateProfile: (updates: Partial<UserProfile>) => void;
   deleteAccount: () => void;
-  availableUsers: UserProfile[];
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(() => store.getCurrentUser());
-  const [availableUsers, setAvailableUsers] = useState<UserProfile[]>(() => store.getAllUsers());
   const [isSupabaseConnected] = useState<boolean>(isSupabaseConfigured);
 
   useEffect(() => {
     const unsubscribe = store.subscribe(() => {
       setUser(store.getCurrentUser());
-      setAvailableUsers(store.getAllUsers());
     });
     return unsubscribe;
   }, []);
@@ -59,17 +55,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // Fast-path / fallback ONLY for DEVELOPMENT_LOCAL mode
-    if (activeEnvConfig.runtimeMode === 'DEVELOPMENT_LOCAL') {
-      try {
-        store.signIn(email);
-        return { success: true };
-      } catch (err: any) {
-        return { success: false, error: err.message };
-      }
+    if (!password) {
+      return { success: false, error: 'يرجى إدخال كلمة المرور للمتابعة.' };
     }
 
-    return { success: false, error: 'غير مصرح بالعملية في وضع النظام الحالي.' };
+    return { success: false, error: 'خدمة المصادقة غير متاحة أو بيانات الاعتماد غير مكتملة.' };
   };
 
   const signUp = async (data: {
@@ -109,17 +99,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // Fallback ONLY for DEVELOPMENT_LOCAL mode
-    if (activeEnvConfig.runtimeMode === 'DEVELOPMENT_LOCAL') {
-      try {
-        store.signUp(data);
-        return { success: true };
-      } catch (err: any) {
-        return { success: false, error: err.message };
-      }
+    if (!data.password) {
+      return { success: false, error: 'كلمة المرور مطلوبة لإنشاء الحساب.' };
     }
 
-    return { success: false, error: 'غير مصرح بالعملية في وضع النظام الحالي.' };
+    return { success: false, error: 'خدمة إنشاء الحساب غير متاحة حالياً.' };
   };
 
   const signOut = async () => {
@@ -138,10 +122,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, error: 'خدمة تأكيد البريد تتطلب اتصال Supabase.' };
     }
     return SupabaseService.resendVerificationEmail(email);
-  };
-
-  const switchDemoUser = (userId: string) => {
-    store.switchDemoUser(userId);
   };
 
   const updateProfile = (updates: Partial<UserProfile>) => {
@@ -167,10 +147,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signOut,
         resetPassword,
         resendVerification,
-        switchDemoUser,
         updateProfile,
         deleteAccount,
-        availableUsers,
       }}
     >
       {children}

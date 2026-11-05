@@ -9,8 +9,6 @@ import {
   Lock, 
   Phone, 
   MapPin, 
-  ShieldCheck, 
-  ArrowRight, 
   CheckCircle2, 
   AlertCircle,
   KeyRound,
@@ -29,7 +27,7 @@ export const AuthModal: React.FC<Props> = ({
   initialMode = 'login',
 }) => {
   const { t, language } = useLanguage();
-  const { signIn, signUp, resetPassword, resendVerification, switchDemoUser, availableUsers, isSupabaseConnected } = useAuth();
+  const { signIn, signUp, resetPassword, resendVerification, isSupabaseConnected } = useAuth();
   
   const [mode, setMode] = useState<'login' | 'register' | 'forgot_password'>(initialMode);
 
@@ -102,7 +100,7 @@ export const AuthModal: React.FC<Props> = ({
 
         if (!res.success) {
           if (res.error?.includes('rate limit')) {
-            setError('تم تجاوز حد إرسال الرسائل المؤقت في سحابة Supabase. يرجى المحاولة بعد قليل أو تجربة الحسابات الجاهزة.');
+            setError('تم تجاوز حد إرسال الرسائل المؤقت في سحابة Supabase. يرجى المحاولة بعد قليل.');
           } else if (res.error?.includes('already registered')) {
             setError('هذا البريد الإلكتروني مسجل بالفعل. يمكنك تسجيل الدخول مباشرة.');
           } else {
@@ -151,11 +149,6 @@ export const AuthModal: React.FC<Props> = ({
       setResendStatus('idle');
       setError(res.error || 'تعذر إعادة إرسال الرابط حالياً.');
     }
-  };
-
-  const handleSelectDemoUser = (userId: string) => {
-    switchDemoUser(userId);
-    onClose();
   };
 
   return (
@@ -393,34 +386,6 @@ export const AuthModal: React.FC<Props> = ({
                 : 'لديك حساب بالفعل؟ تسجيل الدخول'}
             </button>
           )}
-        </div>
-
-        {/* Fast Demo Accounts Switcher (for immediate testing without email confirmation delays) */}
-        <div className="mt-6 pt-5 border-t border-slate-200 dark:border-slate-800">
-          <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 flex items-center justify-between">
-            <span>تجربة الحسابات التجريبية بنقرة واحدة:</span>
-            <ShieldCheck className="w-4 h-4 text-teal-500" />
-          </p>
-          <div className="space-y-1.5">
-            {availableUsers.map((u) => (
-              <button
-                key={u.id}
-                type="button"
-                onClick={() => handleSelectDemoUser(u.id)}
-                className="w-full text-start p-2 rounded-xl text-xs hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between transition group cursor-pointer"
-              >
-                <div>
-                  <span className="font-bold text-slate-800 dark:text-slate-200">
-                    {u.display_name}
-                  </span>
-                  <span className="text-slate-400 text-[10px] block">
-                    {u.email} ({u.role === 'admin' ? 'مشرف المنصة' : 'مواطن'})
-                  </span>
-                </div>
-                <ArrowRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-teal-500 transition-colors" />
-              </button>
-            ))}
-          </div>
         </div>
       </div>
     </div>

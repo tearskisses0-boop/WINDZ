@@ -249,23 +249,46 @@ export const HomePage: React.FC = () => {
           </div>
         </div>
 
-        {/* Listings Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
-          {displayedPosts.map((post) => (
-            <ListingCard key={post.id} post={post} />
-          ))}
-        </div>
+        {/* Listings Grid or Clean Empty State */}
+        {displayedPosts.length > 0 ? (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
+              {displayedPosts.map((post) => (
+                <ListingCard key={post.id} post={post} />
+              ))}
+            </div>
 
-        {/* View All CTA */}
-        <div className="mt-8 text-center">
-          <Link
-            to="/explore"
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-teal-50 dark:hover:bg-slate-700/80 text-teal-700 dark:text-teal-300 font-bold text-sm border border-slate-200 dark:border-slate-700 transition"
-          >
-            <span>{t.browseAll}</span>
-            <ArrowIcon className="w-4 h-4" />
-          </Link>
-        </div>
+            {/* View All CTA */}
+            <div className="mt-8 text-center">
+              <Link
+                to="/explore"
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-teal-50 dark:hover:bg-slate-700/80 text-teal-700 dark:text-teal-300 font-bold text-sm border border-slate-200 dark:border-slate-700 transition"
+              >
+                <span>{t.browseAll}</span>
+                <ArrowIcon className="w-4 h-4" />
+              </Link>
+            </div>
+          </>
+        ) : (
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 sm:p-12 text-center border border-slate-200 dark:border-slate-800 max-w-lg mx-auto shadow-xs">
+            <div className="w-16 h-16 rounded-2xl bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center mx-auto mb-4">
+              <Package className="w-8 h-8" />
+            </div>
+            <h3 className="text-lg font-black text-slate-900 dark:text-white mb-2">
+              لا توجد إعلانات حالياً
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 leading-relaxed mb-6">
+              كن أول من يشارك طلباً أو عرضاً لمساعدة المواطنين في بلديتك أو ولايتك عبر كامل التراب الوطني.
+            </p>
+            <Link
+              to="/create"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs sm:text-sm shadow-md transition cursor-pointer"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>أضف إعلانك الأول</span>
+            </Link>
+          </div>
+        )}
       </section>
 
       {/* How WIN DZ Works */}

@@ -11,7 +11,6 @@ import {
   SearchFilterState
 } from '../../types';
 import { 
-  INITIAL_DEMO_USERS, 
   INITIAL_DEMO_POSTS, 
   INITIAL_DEMO_NOTIFICATIONS, 
   INITIAL_DEMO_REPORTS 
@@ -22,7 +21,7 @@ import { SupabaseService } from './supabaseService';
 import { activeEnvConfig } from './envConfig';
 
 const STORAGE_KEYS = {
-  POSTS: 'windz_posts_v1',
+  POSTS: 'windz_posts_v2',
   USERS: 'windz_users_v1',
   CURRENT_USER: 'windz_current_user_v1',
   CONVERSATIONS: 'windz_convs_v1',
@@ -60,30 +59,39 @@ class DataStore {
 
   private initData() {
     try {
-      // 1. Posts
+      // 1. Posts (clean slate from windz_posts_v2, purge legacy v1 cache)
+      try {
+        localStorage.removeItem('windz_posts_v1');
+      } catch {
+        // ignore localStorage errors in sandboxed iframes
+      }
       const savedPosts = localStorage.getItem(STORAGE_KEYS.POSTS);
-      this.posts = savedPosts ? JSON.parse(savedPosts) : INITIAL_DEMO_POSTS;
+      const parsedPosts: Post[] = savedPosts ? JSON.parse(savedPosts) : [];
+      this.posts = parsedPosts.filter(p => !p.id.startsWith('post-'));
 
-      // 2. Users
+      // 2. Users (filter out legacy demo users)
       const savedUsers = localStorage.getItem(STORAGE_KEYS.USERS);
-      this.users = savedUsers ? JSON.parse(savedUsers) : INITIAL_DEMO_USERS;
+      const parsedUsers: UserProfile[] = savedUsers ? JSON.parse(savedUsers) : [];
+      this.users = parsedUsers.filter(u => !u.id.startsWith('user-'));
 
-      // 3. Current User
+      // 3. Current User (strictly null by default for unauthenticated visitors)
       const savedCurUser = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
       if (savedCurUser) {
-        this.currentUser = JSON.parse(savedCurUser);
+        const parsed = JSON.parse(savedCurUser);
+        this.currentUser = (parsed && !parsed.id?.startsWith('user-')) ? parsed : null;
       } else {
-        // Default to citizen Karim Belhadj so user can test logged-in interactions immediately
-        this.currentUser = this.users[1] || null;
+        this.currentUser = null;
       }
 
       // 4. Notifications
       const savedNotifs = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-      this.notifications = savedNotifs ? JSON.parse(savedNotifs) : INITIAL_DEMO_NOTIFICATIONS;
+      const parsedNotifs: AppNotification[] = savedNotifs ? JSON.parse(savedNotifs) : [];
+      this.notifications = parsedNotifs.filter(n => !n.id.startsWith('notif-'));
 
       // 5. Reports
       const savedReports = localStorage.getItem(STORAGE_KEYS.REPORTS);
-      this.reports = savedReports ? JSON.parse(savedReports) : INITIAL_DEMO_REPORTS;
+      const parsedReports: ContentReport[] = savedReports ? JSON.parse(savedReports) : [];
+      this.reports = parsedReports.filter(r => !r.id.startsWith('rep-'));
 
       // 6. Favorites
       const savedFavs = localStorage.getItem(STORAGE_KEYS.FAVORITES);
@@ -93,41 +101,14 @@ class DataStore {
       const savedSearches = localStorage.getItem(STORAGE_KEYS.SAVED_SEARCHES);
       this.savedSearches = savedSearches ? JSON.parse(savedSearches) : [];
 
-      // 8. Conversations & Messages
+      // 8. Conversations & Messages (clean empty by default)
       const savedConvs = localStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
-      this.conversations = savedConvs ? JSON.parse(savedConvs) : [
-        {
-          id: 'conv-1',
-          post_id: 'post-need-1',
-          participant_ids: ['user-karim', 'user-mehdi'],
-          last_message: 'السلام عليكم أخي، بخصوص الكيلاس مازال متوفر عندك؟',
-          last_message_at: '2026-11-02T16:00:00Z',
-          created_at: '2026-11-02T15:55:00Z',
-          unread_count: 0
-        }
-      ];
+      const parsedConvs: Conversation[] = savedConvs ? JSON.parse(savedConvs) : [];
+      this.conversations = parsedConvs.filter(c => !c.id.startsWith('conv-'));
 
       const savedMsgs = localStorage.getItem(STORAGE_KEYS.MESSAGES);
-      this.messages = savedMsgs ? JSON.parse(savedMsgs) : [
-        {
-          id: 'msg-1',
-          conversation_id: 'conv-1',
-          sender_id: 'user-karim',
-          sender_name: 'كريم بلحاج',
-          content: 'السلام عليكم أخي، بخصوص الكيلاس مازال متوفر عندك؟',
-          is_read: true,
-          created_at: '2026-11-02T16:00:00Z'
-        },
-        {
-          id: 'msg-2',
-          conversation_id: 'conv-1',
-          sender_id: 'user-mehdi',
-          sender_name: 'مهدي وهراني',
-          content: 'وعليكم السلام، نعم مازال متوفر في الحراش، يمكنك المجيء لتفحصه مع الميكانيكي في أي وقت.',
-          is_read: true,
-          created_at: '2026-11-02T16:15:00Z'
-        }
-      ];
+      const parsedMsgs: Message[] = savedMsgs ? JSON.parse(savedMsgs) : [];
+      this.messages = parsedMsgs.filter(m => !m.id.startsWith('msg-'));
 
       // 9. Blocked users
       const savedBlocked = localStorage.getItem(STORAGE_KEYS.BLOCKED_USERS);
@@ -137,11 +118,11 @@ class DataStore {
       const savedLogs = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS);
       this.auditLogs = savedLogs ? JSON.parse(savedLogs) : [];
     } catch {
-      this.posts = INITIAL_DEMO_POSTS;
-      this.users = INITIAL_DEMO_USERS;
-      this.currentUser = this.users[1] || null;
-      this.notifications = INITIAL_DEMO_NOTIFICATIONS;
-      this.reports = INITIAL_DEMO_REPORTS;
+      this.posts = [];
+      this.users = [];
+      this.currentUser = null;
+      this.notifications = [];
+      this.reports = [];
       this.favorites = [];
       this.conversations = [];
       this.messages = [];
@@ -193,11 +174,9 @@ class DataStore {
           }
         } else if (event === 'SIGNED_OUT') {
           // If explicitly signed out of Supabase
-          if (!this.currentUser || !this.currentUser.id.startsWith('user-')) {
-            this.currentUser = null;
-            this.users = INITIAL_DEMO_USERS; // Reset to demo data on logout
-            this.save();
-          }
+          this.currentUser = null;
+          this.users = [];
+          this.save();
         }
       });
 
@@ -238,11 +217,9 @@ class DataStore {
     this.isSupabaseSyncing = true;
     try {
       const { posts } = await SupabaseService.fetchPosts({ pageSize: 100 });
-      if (posts && posts.length > 0) {
-        // Merge Supabase posts, prioritizing live database items
-        const dbPostIds = new Set(posts.map(p => p.id));
-        const nonDbPosts = this.posts.filter(p => !dbPostIds.has(p.id) && p.id.startsWith('post-'));
-        this.posts = [...posts, ...nonDbPosts];
+      if (posts) {
+        // Live database is the authoritative source of truth
+        this.posts = posts;
         this.save();
       }
     } catch (err) {
@@ -525,55 +502,12 @@ class DataStore {
     return [...this.users];
   }
 
-  public signIn(email: string): UserProfile {
-    if (activeEnvConfig.runtimeMode === 'STAGING_ERROR' || activeEnvConfig.runtimeMode === 'PRODUCTION_ERROR') {
-      throw new Error(`فشل تسجيل الدخول: ${activeEnvConfig.statusMessage}`);
-    }
-    const user = this.users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (!user) {
-      throw new Error('البريد الإلكتروني غير مسجل. يمكنك إنشاء حساب جديد.');
-    }
-    if (user.is_suspended) {
-      throw new Error('هذا الحساب معلق حالياً من قبل الإدارة.');
-    }
-    this.currentUser = user;
-    this.save();
-    return user;
+  public signIn(_email: string): UserProfile {
+    throw new Error('تسجيل الدخول يتطلب الاتصال بمصادقة Supabase الرسمية وإدخال كلمة المرور.');
   }
 
-  public signUp(data: { email: string; display_name: string; wilaya_id: number; phone?: string }): UserProfile {
-    if (activeEnvConfig.runtimeMode === 'STAGING_ERROR' || activeEnvConfig.runtimeMode === 'PRODUCTION_ERROR') {
-      throw new Error(`فشل إنشاء الحساب: ${activeEnvConfig.statusMessage}`);
-    }
-    const exists = this.users.find(u => u.email.toLowerCase() === data.email.toLowerCase());
-    if (exists) {
-      throw new Error('البريد الإلكتروني مسجل بالفعل. يرجى تسجيل الدخول.');
-    }
-
-    const newUser: UserProfile = {
-      id: `user-${Date.now()}`,
-      email: data.email,
-      display_name: data.display_name,
-      phone: data.phone || '',
-      wilaya_id: data.wilaya_id,
-      preferred_language: 'ar',
-      role: 'user',
-      is_verified: true,
-      created_at: new Date().toISOString(),
-    };
-
-    this.users.push(newUser);
-    this.currentUser = newUser;
-    this.save();
-    return newUser;
-  }
-
-  public switchDemoUser(userId: string): void {
-    const target = this.users.find(u => u.id === userId);
-    if (target) {
-      this.currentUser = target;
-      this.save();
-    }
+  public signUp(_data: { email: string; display_name: string; wilaya_id: number; phone?: string }): UserProfile {
+    throw new Error('إنشاء الحساب يتطلب الاتصال بمصادقة Supabase الرسمية.');
   }
 
   public async getProfile(userId: string): Promise<UserProfile | null> {

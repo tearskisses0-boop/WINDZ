@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import { store } from '../../lib/supabase/store';
@@ -17,7 +17,8 @@ import {
   SlidersHorizontal, 
   RotateCcw, 
   Check, 
-  PackageSearch 
+  PackageSearch,
+  PlusCircle 
 } from 'lucide-react';
 
 export const ExplorePage: React.FC = () => {
@@ -365,12 +366,13 @@ export const ExplorePage: React.FC = () => {
             >
               {t.clearFilters}
             </button>
-            <a
-              href="/create"
-              className="px-4 py-2.5 rounded-xl bg-teal-600 text-white font-bold text-xs hover:bg-teal-500 shadow-md transition"
+            <Link
+              to="/create"
+              className="px-5 py-2.5 rounded-xl bg-teal-600 text-white font-bold text-xs hover:bg-teal-500 shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              انشر طلبك أو عرضك الآن
-            </a>
+              <PlusCircle className="w-4 h-4" />
+              <span>أضف إعلانك الأول</span>
+            </Link>
           </div>
         </div>
       )}

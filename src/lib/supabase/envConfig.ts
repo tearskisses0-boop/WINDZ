@@ -67,9 +67,6 @@ export const resolveAppEnv = (overrideVars?: {
   url?: string;
   key?: string;
 }): AppEnvConfig => {
-  const modeVar = overrideVars?.mode || getEnvVar('VITE_ENV_MODE') || getEnvVar('MODE') || 'development';
-  const mode: EnvironmentMode = (modeVar === 'staging' || modeVar === 'production') ? modeVar : 'development';
-
   const rawUrl = overrideVars?.url ?? getEnvVar('VITE_SUPABASE_URL');
   const rawKey = overrideVars?.key ?? getEnvVar('VITE_SUPABASE_ANON_KEY');
 
@@ -78,6 +75,10 @@ export const resolveAppEnv = (overrideVars?: {
   const projectRef = extractProjectRef(url);
 
   const isProductionRef = projectRef === PRODUCTION_PROJECT_REF;
+  const isStagingRef = projectRef === 'qbfzhcngxtpjtljivzcw';
+
+  const modeVar = overrideVars?.mode || getEnvVar('VITE_ENV_MODE') || (isStagingRef ? 'staging' : (getEnvVar('MODE') || 'development'));
+  const mode: EnvironmentMode = (modeVar === 'staging' || modeVar === 'production') ? modeVar : 'development';
 
   // 1. STAGING MODE VALIDATION & SAFEGUARDS
   if (mode === 'staging') {
