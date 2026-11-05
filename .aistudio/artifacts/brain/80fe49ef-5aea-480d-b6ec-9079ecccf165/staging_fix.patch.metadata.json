@@ -1,5 +1,0 @@
-{
-  "summary": "Git patch for commit f954a37ccd1afb1e677d76128bec65a9650146f5 on branch staging-beta.\nContains all modifications for Supabase Staging synchronization, removal of mock auth and demo data, and empty state rendering.",
-  "updatedAt": "2026-11-05T13:38:57.899301078Z",
-  "userFacing": true
-}
