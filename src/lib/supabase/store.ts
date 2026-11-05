@@ -216,14 +216,15 @@ class DataStore {
     if (!supabase || !isSupabaseConfigured || this.isSupabaseSyncing) return;
     this.isSupabaseSyncing = true;
     try {
-      const { posts } = await SupabaseService.fetchPosts({ pageSize: 100 });
-      if (posts) {
-        // Live database is the authoritative source of truth
-        this.posts = posts;
+      const res = await SupabaseService.fetchPosts({ pageSize: 100 });
+      if (res && Array.isArray(res.posts)) {
+        // Successful query response (including empty [] as authoritative DB state)
+        this.posts = res.posts;
         this.save();
       }
     } catch (err) {
-      console.warn('Could not refresh posts from Supabase:', err);
+      // Network failure or DB query error: KEEP current local posts, DO NOT wipe!
+      console.warn('Network error or fetch failure during refreshPostsFromSupabase. Retaining local cache:', err);
     } finally {
       this.isSupabaseSyncing = false;
     }
@@ -323,7 +324,10 @@ class DataStore {
     }
   }
 
-  public createPost(data: Omit<Post, 'id' | 'views_count' | 'created_at' | 'updated_at' | 'last_confirmed_at' | 'expires_at'>): Post {
+  public async createPost(
+    data: Omit<Post, 'id' | 'views_count' | 'created_at' | 'updated_at' | 'last_confirmed_at' | 'expires_at'>,
+    existingPostId?: string
+  ): Promise<Post> {
     if (activeEnvConfig.runtimeMode === 'STAGING_ERROR' || activeEnvConfig.runtimeMode === 'PRODUCTION_ERROR') {
       throw new Error(`فشل إنشاء الإعلان: ${activeEnvConfig.statusMessage}`);
     }
@@ -336,9 +340,10 @@ class DataStore {
     const expires = new Date();
     expires.setDate(now.getDate() + 30);
 
+    const tempId = existingPostId || `post-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const newPost: Post = {
       ...data,
-      id: `post-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      id: tempId,
       user_id: this.currentUser.id,
       user: {
         id: this.currentUser.id,
@@ -353,26 +358,41 @@ class DataStore {
       updated_at: now.toISOString(),
     };
 
-    // Prepend to local state for instantaneous UI responsiveness
-    this.posts.unshift(newPost);
-
-    // If Supabase is connected and user is logged in to Supabase, persist to database
+    // If Supabase is connected and configured, persist to database
     if (isSupabaseConfigured && supabase) {
-      SupabaseService.createPost(data)
-        .then(savedPost => {
-          // Replace optimistic post with confirmed DB post
-          const idx = this.posts.findIndex(p => p.id === newPost.id);
-          if (idx !== -1) {
-            this.posts[idx] = savedPost;
-            this.save();
-          }
-        })
-        .catch(err => {
-          console.error('Failed to persist post to Supabase:', err);
-        });
+      // Optimistically add to local array if not already there
+      const existingIdx = this.posts.findIndex(p => p.id === tempId);
+      if (existingIdx === -1) {
+        this.posts.unshift(newPost);
+      }
+
+      try {
+        const savedPost = await SupabaseService.createPost(data, existingPostId);
+        // Replace temp or existing post with confirmed DB post containing real UUID
+        const idx = this.posts.findIndex(p => p.id === tempId || p.id === savedPost.id);
+        if (idx !== -1) {
+          this.posts[idx] = savedPost;
+        } else {
+          this.posts.unshift(savedPost);
+        }
+        this.save();
+        this.notify();
+        return savedPost;
+      } catch (err: any) {
+        // REVERT optimistic update on Supabase failure ONLY if post wasn't partially saved in DB
+        if (!err.pendingPostId) {
+          this.posts = this.posts.filter(p => p.id !== tempId);
+        }
+        this.save();
+        this.notify();
+        throw err;
+      }
     }
 
+    // Fallback for local offline development
+    this.posts.unshift(newPost);
     this.save();
+    this.notify();
     return newPost;
   }
 

@@ -8,14 +8,3 @@ coverage/
 env.staging
 beta_audit_results.json
 !.env.example
-
-# Temporary patches, bundles, artifacts, and export archives
-*.patch
-*.bundle
-*.tar.gz
-*.zip
-staging_fix.*
-0001-*.patch
-windz_staging_*
-.aistudio/
-

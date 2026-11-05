@@ -326,12 +326,12 @@ export class SupabaseService {
 
   public static async fetchPosts(filters?: Partial<SearchFilterState>): Promise<{ posts: Post[]; total: number }> {
     if (!supabase || !isSupabaseConfigured) {
-      return { posts: [], total: 0 };
+      throw new Error('Supabase غير متصل أو غير مهيأ للجلب.');
     }
 
     let query = supabase
       .from('posts')
-      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id)', { count: 'exact' });
+      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id), post_images(image_url, sort_order)', { count: 'exact' });
 
     // Filter by active status
     if (filters?.availability && filters.availability !== 'ALL') {
@@ -404,6 +404,10 @@ export class SupabaseService {
 
     const posts: Post[] = (data || []).map((row: any) => {
       const seller = row.public_profiles || row.profiles;
+      const joinedImages = Array.isArray(row.post_images)
+        ? row.post_images.map((img: any) => img.image_url)
+        : (Array.isArray(row.images) ? row.images : []);
+
       return {
         id: row.id,
         user_id: row.user_id,
@@ -415,7 +419,7 @@ export class SupabaseService {
         wilaya_id: row.wilaya_id,
         commune_id: row.commune_id,
         commune_name: row.commune_name,
-        images: (Array.isArray(row.images) ? row.images : []).map((img: string) => ensureFullUrl(img)).filter(Boolean) as string[],
+        images: joinedImages.map((img: string) => ensureFullUrl(img)).filter(Boolean) as string[],
         price: row.price != null ? Number(row.price) : undefined,
         budget_max: row.budget_max != null ? Number(row.budget_max) : undefined,
         is_free: row.is_free,
@@ -446,13 +450,16 @@ export class SupabaseService {
 
     const { data, error } = await supabase
       .from('posts')
-      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id)')
+      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id), post_images(image_url, sort_order)')
       .eq('id', id)
       .maybeSingle();
 
     if (error || !data) return null;
 
     const seller = data.public_profiles || data.profiles;
+    const joinedImages = Array.isArray(data.post_images)
+      ? data.post_images.map((img: any) => img.image_url)
+      : (Array.isArray(data.images) ? data.images : []);
 
     return {
       id: data.id,
@@ -465,7 +472,7 @@ export class SupabaseService {
       wilaya_id: data.wilaya_id,
       commune_id: data.commune_id,
       commune_name: data.commune_name,
-      images: (Array.isArray(data.images) ? data.images : []).map((img: string) => ensureFullUrl(img)).filter(Boolean) as string[],
+      images: joinedImages.map((img: string) => ensureFullUrl(img)).filter(Boolean) as string[],
       price: data.price != null ? Number(data.price) : undefined,
       budget_max: data.budget_max != null ? Number(data.budget_max) : undefined,
       is_free: data.is_free,
@@ -488,73 +495,210 @@ export class SupabaseService {
     };
   }
 
-  public static async createPost(post: Omit<Post, 'id' | 'views_count' | 'created_at' | 'updated_at' | 'last_confirmed_at' | 'expires_at'>): Promise<Post> {
+  public static async createPost(
+    post: Omit<Post, 'id' | 'views_count' | 'created_at' | 'updated_at' | 'last_confirmed_at' | 'expires_at'>,
+    existingPostId?: string
+  ): Promise<Post> {
     if (!supabase || !isSupabaseConfigured) {
       throw new Error('Supabase غير متصل.');
     }
 
-    const now = new Date();
-    const expires = new Date();
-    expires.setDate(now.getDate() + 30);
+    // Verify caller identity from active auth session strictly (no fallback to client post.user_id)
+    const { data: authData, error: authErr } = await supabase.auth.getUser();
+    if (authErr || !authData?.user?.id) {
+      throw new Error('جلسة المستخدم غير صالحة أو غير مصادق عليها. يرجى تسجيل الدخول مجدداً لنشر الإعلان.');
+    }
+    const authenticatedUserId = authData.user.id;
 
-    const payload = {
-      user_id: post.user_id,
-      title: post.title,
-      description: post.description,
-      post_type: post.post_type,
-      category_id: post.category_id,
-      subcategory_id: post.subcategory_id || null,
-      wilaya_id: post.wilaya_id,
-      commune_id: post.commune_id || null,
-      commune_name: post.commune_name || null,
-      images: post.images || [],
-      price: post.price || null,
-      budget_max: post.budget_max || null,
-      is_free: Boolean(post.is_free),
-      availability_status: post.availability_status || 'available',
-      contact_preference: post.contact_preference || 'chat_only',
-      condition: post.condition || null,
-      last_confirmed_at: now.toISOString(),
-      expires_at: expires.toISOString(),
-      views_count: 0,
-    };
+    let insertedPost: any = null;
 
-    const { data, error } = await supabase
-      .from('posts')
-      .insert([payload])
-      .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id)')
-      .single();
+    // 1. RECOVERY PATH: If existingPostId is supplied, retrieve and validate existing post strictly
+    if (existingPostId) {
+      const { data: existing, error: fetchError } = await supabase
+        .from('posts')
+        .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id)')
+        .eq('id', existingPostId)
+        .maybeSingle();
 
-    if (error) {
-      throw new Error(`فشل إنشاء الإعلان في قاعدة البيانات: ${error.message}`);
+      if (fetchError) {
+        throw new Error(`فشل الاستعلام عن الإعلان السابق المعرف: ${existingPostId} (${fetchError.message})`);
+      }
+
+      if (!existing) {
+        throw new Error(`تعذر العثور على الإعلان السابق المعرف: ${existingPostId}. لا يمكن استكمال العملية.`);
+      }
+
+      if (existing.user_id !== authenticatedUserId) {
+        throw new Error(`غير مصرح لك باستعادة أو تعديل هذا الإعلان المعرف: ${existingPostId} (ملكية حساب آخر).`);
+      }
+
+      insertedPost = existing;
+    } else {
+      // 2. NEW POST PATH: Executed ONLY when existingPostId is not provided
+      const now = new Date();
+      const expires = new Date();
+      expires.setDate(now.getDate() + 30);
+
+      // Payload ONLY contains valid columns existing in posts table (images is excluded)
+      const payload = {
+        user_id: authenticatedUserId,
+        title: post.title,
+        description: post.description,
+        post_type: post.post_type,
+        category_id: post.category_id,
+        subcategory_id: post.subcategory_id || null,
+        wilaya_id: post.wilaya_id,
+        commune_id: post.commune_id || null,
+        commune_name: post.commune_name || null,
+        price: post.price || null,
+        budget_max: post.budget_max || null,
+        is_free: Boolean(post.is_free),
+        availability_status: post.availability_status || 'available',
+        contact_preference: post.contact_preference || 'chat_only',
+        condition: post.condition || null,
+        last_confirmed_at: now.toISOString(),
+        expires_at: expires.toISOString(),
+        views_count: 0,
+      };
+
+      const { data: newPost, error: postError } = await supabase
+        .from('posts')
+        .insert([payload])
+        .select('*, profiles:user_id(id, display_name, avatar_url, wilaya_id)')
+        .single();
+
+      if (postError) {
+        throw new Error(`فشل إنشاء الإعلان في قاعدة البيانات: ${postError.message}`);
+      }
+      insertedPost = newPost;
+    }
+
+    // 3. Persist post images to post_images child table if provided
+    let savedImages: string[] = [];
+    const imagesToSave = (post.images || []).filter(Boolean);
+
+    if (imagesToSave.length > 0) {
+      let needsInsert = true;
+
+      // Idempotency check: if retrying, check existing images first
+      if (existingPostId) {
+        const { data: existingImgs, error: checkErr } = await supabase
+          .from('post_images')
+          .select('image_url, sort_order')
+          .eq('post_id', insertedPost.id)
+          .order('sort_order', { ascending: true });
+
+        if (checkErr) {
+          const err = new Error(`فشل استعلام صور الإعلان المحفوظة مسبقاً: ${checkErr.message}`);
+          (err as any).pendingPostId = insertedPost.id;
+          throw err;
+        }
+
+        if (existingImgs && existingImgs.length > 0) {
+          // Compare exact lengths, URLs, and sort_orders element by element
+          const exactMatch = existingImgs.length === imagesToSave.length && existingImgs.every((row: any, idx: number) => {
+            const rowFullUrl = ensureFullUrl(row.image_url);
+            const targetFullUrl = ensureFullUrl(imagesToSave[idx]);
+            const matchesUrl = rowFullUrl === targetFullUrl || row.image_url === imagesToSave[idx];
+            const matchesOrder = row.sort_order === idx;
+            return matchesUrl && matchesOrder;
+          });
+
+          if (exactMatch) {
+            savedImages = existingImgs.map((row: any) => ensureFullUrl(row.image_url)).filter(Boolean) as string[];
+            needsInsert = false;
+          } else {
+            // Clean up previous rows before inserting new set
+            const { error: delErr } = await supabase.from('post_images').delete().eq('post_id', insertedPost.id);
+            if (delErr) {
+              const err = new Error(`فشل تنظيف أسطر الصور السابقة للإعلان: ${delErr.message}`);
+              (err as any).pendingPostId = insertedPost.id;
+              throw err;
+            }
+          }
+        }
+      }
+
+      if (needsInsert) {
+        const imagePayloads = imagesToSave.map((imgUrl, index) => ({
+          post_id: insertedPost.id,
+          image_url: imgUrl,
+          sort_order: index,
+        }));
+
+        const { data: imgData, error: imgError } = await supabase
+          .from('post_images')
+          .insert(imagePayloads)
+          .select('image_url');
+
+        if (imgError) {
+          // Attempt compensation DELETE restricted strictly by id AND user_id
+          const { data: deletedData, error: cleanupError } = await supabase
+            .from('posts')
+            .delete()
+            .eq('id', insertedPost.id)
+            .eq('user_id', insertedPost.user_id)
+            .select('id');
+
+          const wasDeleted = !cleanupError && Array.isArray(deletedData) && deletedData.length > 0;
+
+          if (wasDeleted) {
+            const err = new Error(`فشل حفظ صور الإعلان (${imgError.message}). تم إلغاء إنشاء الإعلان بنجاح لتجنب حفظ إعلان بدون صور.`);
+            (err as any).pendingPostId = null;
+            (err as any).wasDeleted = true;
+            throw err;
+          } else {
+            const cleanupMsg = cleanupError
+              ? `(خطأ الحذف التعويضي: ${cleanupError.message})`
+              : `(لم يتم إرجاع أية سجلات محذوفة من قاعدة البيانات)`;
+            
+            const err = new Error(
+              `فشل حفظ صور الإعلان في قاعدة البيانات (${imgError.message}). الإعلان محفوظ جزئياً برقم المعرف: ${insertedPost.id} ${cleanupMsg}`
+            );
+            (err as any).pendingPostId = insertedPost.id;
+            (err as any).wasDeleted = false;
+            throw err;
+          }
+        }
+
+        if (imgData && imgData.length > 0) {
+          savedImages = imgData.map((row: any) => ensureFullUrl(row.image_url)).filter(Boolean) as string[];
+        } else {
+          const err = new Error(`فشل حفظ صور الإعلان: لم يتم إرجاع صور محفوظة من قاعدة البيانات. المعرف: ${insertedPost.id}`);
+          (err as any).pendingPostId = insertedPost.id;
+          throw err;
+        }
+      }
     }
 
     return {
-      id: data.id,
-      user_id: data.user_id,
-      title: data.title,
-      description: data.description,
-      post_type: data.post_type,
-      category_id: data.category_id,
-      subcategory_id: data.subcategory_id,
-      wilaya_id: data.wilaya_id,
-      commune_id: data.commune_id,
-      commune_name: data.commune_name,
-      images: (Array.isArray(data.images) ? data.images : []).map((img: string) => ensureFullUrl(img)).filter(Boolean) as string[],
-      price: data.price != null ? Number(data.price) : undefined,
-      budget_max: data.budget_max != null ? Number(data.budget_max) : undefined,
-      is_free: data.is_free,
-      availability_status: data.availability_status,
-      contact_preference: data.contact_preference,
-      condition: data.condition,
-      last_confirmed_at: data.last_confirmed_at,
-      expires_at: data.expires_at,
-      views_count: data.views_count || 0,
-      created_at: data.created_at,
-      updated_at: data.updated_at,
-      user: data.profiles ? {
-        ...data.profiles,
-        avatar_url: ensureFullUrl(data.profiles.avatar_url)
+      id: insertedPost.id,
+      user_id: insertedPost.user_id,
+      title: insertedPost.title,
+      description: insertedPost.description,
+      post_type: insertedPost.post_type,
+      category_id: insertedPost.category_id,
+      subcategory_id: insertedPost.subcategory_id,
+      wilaya_id: insertedPost.wilaya_id,
+      commune_id: insertedPost.commune_id,
+      commune_name: insertedPost.commune_name,
+      images: savedImages,
+      price: insertedPost.price != null ? Number(insertedPost.price) : undefined,
+      budget_max: insertedPost.budget_max != null ? Number(insertedPost.budget_max) : undefined,
+      is_free: insertedPost.is_free,
+      availability_status: insertedPost.availability_status,
+      contact_preference: insertedPost.contact_preference,
+      condition: insertedPost.condition,
+      last_confirmed_at: insertedPost.last_confirmed_at,
+      expires_at: insertedPost.expires_at,
+      views_count: insertedPost.views_count || 0,
+      created_at: insertedPost.created_at,
+      updated_at: insertedPost.updated_at,
+      user: insertedPost.profiles ? {
+        id: insertedPost.profiles.id,
+        display_name: insertedPost.profiles.display_name,
+        wilaya_id: insertedPost.profiles.wilaya_id,
+        avatar_url: ensureFullUrl(insertedPost.profiles.avatar_url),
       } : undefined,
     };
   }

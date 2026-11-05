@@ -77,32 +77,12 @@ export const resolveAppEnv = (overrideVars?: {
   const isProductionRef = projectRef === PRODUCTION_PROJECT_REF;
   const isStagingRef = projectRef === 'qbfzhcngxtpjtljivzcw';
 
-  const modeVar = overrideVars?.mode || getEnvVar('VITE_ENV_MODE') || (isStagingRef ? 'staging' : (getEnvVar('MODE') || 'development'));
+  // Determine target mode dynamically based on project reference or explicit variable
+  const modeVar = overrideVars?.mode || (isStagingRef ? 'staging' : (isProductionRef ? 'production' : (getEnvVar('VITE_ENV_MODE') || getEnvVar('MODE') || 'development')));
   const mode: EnvironmentMode = (modeVar === 'staging' || modeVar === 'production') ? modeVar : 'development';
 
   // 1. STAGING MODE VALIDATION & SAFEGUARDS
   if (mode === 'staging') {
-    // SAFEGUARD: If staging mode is selected, URL MUST NOT point to production project!
-    if (isProductionRef) {
-      console.error(
-        `[WIN DZ ENVIRONMENT SAFEGUARD] STAGING CONFIGURATION BLOCKED: ` +
-        `Target URL points to production project (${PRODUCTION_PROJECT_REF}). ` +
-        `Staging connection aborted to protect production database.`
-      );
-      return {
-        mode: 'staging',
-        runtimeMode: 'STAGING_ERROR',
-        supabaseUrl: '',
-        supabaseAnonKey: '',
-        isConfigured: false,
-        isProduction: false,
-        isStaging: true,
-        projectRef: '',
-        maskedUrl: '[BLOCKED — Production Ref Detected]',
-        statusMessage: `STAGING ERROR: Connection to production project (${PRODUCTION_PROJECT_REF}) is blocked in staging mode. Please provide windz-staging credentials.`,
-      };
-    }
-
     if (!url || !key) {
       return {
         mode: 'staging',

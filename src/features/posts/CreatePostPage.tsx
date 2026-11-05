@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import { store } from '../../lib/supabase/store';
+import { isSupabaseConfigured } from '../../lib/supabase/client';
+import { activeEnvConfig } from '../../lib/supabase/envConfig';
 import { PLATFORM_CATEGORIES, getCategoryName } from '../../data/categories';
 import { ALGERIAN_WILAYAS, getWilayaName } from '../../data/locations/wilayas';
 import { getCommuneById } from '../../data/locations/communes';
@@ -42,13 +44,52 @@ export const CreatePostPage: React.FC = () => {
   const [contactPreference, setContactPreference] = useState<ContactPreference>('chat_only');
   const [condition, setCondition] = useState('');
 
-  // Images state
+  // Images & Submission state
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingPostId, setPendingPostId] = useState<string | null>(null);
 
   const selectedCategory = PLATFORM_CATEGORIES.find(c => c.id === categoryId);
+
+  // Restore pending post state from localStorage across page refreshes
+  React.useEffect(() => {
+    if (!isAuthenticated || !user) return;
+    try {
+      const saved = localStorage.getItem('windz_pending_post_recovery_v1');
+      if (!saved) return;
+      const pending = JSON.parse(saved);
+      if (pending && pending.user_id === user.id && pending.pendingPostId) {
+        // Verify that the pending post actually exists in Supabase and belongs to current user
+        import('../../lib/supabase/supabaseService').then(({ SupabaseService }) => {
+          SupabaseService.fetchPostById(pending.pendingPostId).then((existingPost) => {
+            if (existingPost && existingPost.user_id === user.id) {
+              setPendingPostId(pending.pendingPostId);
+              if (pending.title) setTitle(pending.title);
+              if (pending.description) setDescription(pending.description);
+              if (pending.postType) setPostType(pending.postType);
+              if (pending.categoryId) setCategoryId(pending.categoryId);
+              if (pending.subcategoryId) setSubcategoryId(pending.subcategoryId);
+              if (pending.wilayaId) setWilayaId(pending.wilayaId);
+              if (pending.communeId) setCommuneId(pending.communeId);
+              if (pending.priceOrBudget) setPriceOrBudget(pending.priceOrBudget);
+              if (pending.isFree !== undefined) setIsFree(pending.isFree);
+              if (pending.contactPreference) setContactPreference(pending.contactPreference);
+              if (pending.condition) setCondition(pending.condition);
+              if (Array.isArray(pending.uploadedImages)) setUploadedImages(pending.uploadedImages);
+            } else {
+              localStorage.removeItem('windz_pending_post_recovery_v1');
+            }
+          }).catch(() => {});
+        });
+      } else {
+        localStorage.removeItem('windz_pending_post_recovery_v1');
+      }
+    } catch {
+      // Ignore parse notice
+    }
+  }, [user?.id, isAuthenticated]);
 
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
@@ -86,8 +127,23 @@ export const CreatePostPage: React.FC = () => {
     setUploadedImages(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleDiscardPending = () => {
+    setPendingPostId(null);
+    try {
+      localStorage.removeItem('windz_pending_post_recovery_v1');
+    } catch {}
+    setTitle('');
+    setDescription('');
+    setUploadedImages([]);
+    setPriceOrBudget('');
+    setIsFree(false);
+    setError('');
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return; // Prevent double-clicks / concurrent submissions
+
     setError('');
 
     if (!isAuthenticated) {
@@ -105,14 +161,18 @@ export const CreatePostPage: React.FC = () => {
       return;
     }
 
+    if (!isSupabaseConfigured) {
+      setError(`تعذر الاتصال بقاعدة بيانات Supabase المباشرة (${activeEnvConfig.statusMessage}). يرجى التأكد من ضبط إعدادات الاتصال قبل النشر.`);
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
       const parsedAmount = priceOrBudget.trim() ? Number(priceOrBudget) : undefined;
-
       const selectedCommuneObj = communeId ? getCommuneById(communeId) : undefined;
 
-      const created = store.createPost({
+      const created = await store.createPost({
         user_id: user!.id,
         title: title.trim(),
         description: description.trim(),
@@ -129,11 +189,47 @@ export const CreatePostPage: React.FC = () => {
         availability_status: 'available',
         contact_preference: contactPreference,
         condition: condition.trim() || undefined,
-      });
+      }, pendingPostId || undefined);
+
+      store.refreshPostsFromSupabase().catch(() => {});
+
+      setPendingPostId(null);
+      try {
+        localStorage.removeItem('windz_pending_post_recovery_v1');
+      } catch {}
 
       navigate(`/post/${created.id}`);
     } catch (err: any) {
+      if (err?.pendingPostId) {
+        setPendingPostId(err.pendingPostId);
+        try {
+          const draft = {
+            pendingPostId: err.pendingPostId,
+            user_id: user!.id,
+            title: title.trim(),
+            description: description.trim(),
+            postType,
+            categoryId,
+            subcategoryId,
+            wilayaId,
+            communeId,
+            priceOrBudget,
+            isFree,
+            contactPreference,
+            condition,
+            uploadedImages,
+            timestamp: Date.now(),
+          };
+          localStorage.setItem('windz_pending_post_recovery_v1', JSON.stringify(draft));
+        } catch {}
+      } else if (err?.wasDeleted) {
+        setPendingPostId(null);
+        try {
+          localStorage.removeItem('windz_pending_post_recovery_v1');
+        } catch {}
+      }
       setError(err.message || 'حدث خطأ أثناء حفظ الإعلان.');
+    } finally {
       setIsSubmitting(false);
     }
   };
@@ -441,14 +537,41 @@ export const CreatePostPage: React.FC = () => {
         </div>
 
         {/* Submit Button */}
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="w-full py-4 rounded-2xl bg-gradient-to-r from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-white font-black text-base shadow-lg shadow-teal-500/25 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-        >
-          <CheckCircle2 className="w-5 h-5" />
-          <span>{isSubmitting ? t.publishing : t.submitPost}</span>
-        </button>
+        <div className="space-y-3 pt-2">
+          {pendingPostId && (
+            <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-xs sm:text-sm space-y-3">
+              <div className="flex items-center gap-2 font-bold">
+                <AlertCircle className="w-5 h-5 shrink-0 text-amber-600 dark:text-amber-400" />
+                <span>الإعلان محفوظ جزئياً برقم المعرف: <code className="bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 rounded text-[11px] font-mono">{pendingPostId}</code></span>
+              </div>
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                اضغط زر الإعادة أدناه لإعادة محاولة حفظ الصور المرتبطة بهذا الإعلان نفسه دون إنشاء إعلان جديد.
+              </p>
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={handleDiscardPending}
+                  className="px-3 py-1.5 rounded-xl bg-amber-200/60 dark:bg-amber-900/60 hover:bg-amber-300 dark:hover:bg-amber-800 text-amber-900 dark:text-amber-100 text-xs font-bold transition cursor-pointer"
+                >
+                  إلغاء وربط إعلان جديد
+                </button>
+              </div>
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full py-4 rounded-2xl bg-gradient-to-r from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-white font-black text-base shadow-lg shadow-teal-500/25 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+          >
+            <CheckCircle2 className="w-5 h-5" />
+            <span>
+              {isSubmitting
+                ? (pendingPostId ? 'جاري استكمال الحفظ...' : t.publishing)
+                : (pendingPostId ? 'إعادة محاولة حفظ الصور للإعلان' : t.submitPost)}
+            </span>
+          </button>
+        </div>
       </form>
 
       {/* Auth Modal if unauthenticated */}
